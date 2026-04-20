@@ -1,7 +1,7 @@
-﻿{
+{
   "name": "lomza-roleplay-bot",
   "version": "1.0.0",
-  "description": "Bot dla Łomża Roleplay",
+  "description": "Bot do Lomza Roleplay",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
