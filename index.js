@@ -1,7 +1,7 @@
-﻿const { Client, GatewayIntentBits, Collection, REST, Routes, EmbedBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, Collection, REST, Routes } = require('discord.js');
 const noblox = require('noblox.js');
 const fs = require('fs');
-require('dotenv').config();   // ← To jest nowa linijka
+require('dotenv').config();
 
 const config = {
     token: process.env.TOKEN,
@@ -12,6 +12,7 @@ const config = {
     logChannelId: process.env.LOG_CHANNEL_ID,
     verificationChannelId: process.env.VERIFICATION_CHANNEL_ID,
     verifiedRoleId: process.env.VERIFIED_ROLE_ID,
+    unverifiedRoleId: process.env.UNVERIFIED_ROLE_ID,
     adminRoleId: process.env.ADMIN_ROLE_ID,
     colors: {
         success: "#00FF7F",
@@ -32,7 +33,6 @@ const client = new Client({
 
 client.commands = new Collection();
 
-// Ładowanie komend
 const commandFiles = fs.readdirSync('./commands').filter(f => f.endsWith('.js'));
 const commands = [];
 
@@ -42,40 +42,38 @@ for (const file of commandFiles) {
     commands.push(command.data.toJSON());
 }
 
-// Rejestracja komend
 const rest = new REST({ version: '10' }).setToken(config.token);
 
 (async () => {
     try {
-        console.log('⏳ Rejestruję komendy...');
+        console.log('⏳ Rejestruje komendy...');
         await rest.put(
             Routes.applicationGuildCommands(config.clientId, config.guildId),
             { body: commands }
         );
         console.log('✅ Komendy zarejestrowane!');
     } catch (error) {
-        console.error('❌ Błąd rejestracji komend:', error);
+        console.error('❌ Blad rejestracji komend:', error);
     }
 })();
 
 client.once('ready', async () => {
     console.log(`✅ Bot ${client.user.tag} jest online!`);
-    console.log(`🎮 Łomża Roleplay Bot działa 24/7`);
+    console.log(`🎮 Lomza Roleplay Bot dziala 24/7`);
 
     try {
         await noblox.setCookie(config.roblosecurity);
         const user = await noblox.getCurrentUser();
         console.log(`✅ Zalogowano do Roblox jako: ${user.UserName}`);
     } catch (error) {
-        console.error('❌ Błąd logowania do Roblox:', error.message);
+        console.error('❌ Blad logowania do Roblox:', error.message);
     }
 
-    client.user.setActivity('Łomża Roleplay', { type: 3 });
+    client.user.setActivity('Lomza Roleplay', { type: 3 });
 });
 
 client.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
-
     const command = client.commands.get(interaction.commandName);
     if (!command) return;
 
@@ -83,7 +81,7 @@ client.on('interactionCreate', async interaction => {
         await command.execute(interaction, client, config, noblox);
     } catch (error) {
         console.error(error);
-        await interaction.reply({ content: '❌ Wystąpił błąd!', ephemeral: true }).catch(() => {});
+        await interaction.reply({ content: '❌ Wystapil blad!', ephemeral: true }).catch(() => {});
     }
 });
 
