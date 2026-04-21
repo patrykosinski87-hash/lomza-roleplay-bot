@@ -1,16 +1,4 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const fs = require('fs');
-const path = require('path');
-
-function loadVerified() {
-    const file = path.join(__dirname, '../data/verified.json');
-    if (!fs.existsSync(file)) fs.writeFileSync(file, '{}');
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
-}
-
-function saveVerified(data) {
-    fs.writeFileSync(path.join(__dirname, '../data/verified.json'), JSON.stringify(data, null, 2));
-}
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -22,132 +10,79 @@ module.exports = {
                 .setRequired(true)
         ),
 
-    async execute(interaction, client, config) {
+    async execute(interaction, client, config, noblox, db) {
         await interaction.deferReply({ ephemeral: true });
 
         const robloxId = interaction.options.getString('id');
         const discordId = interaction.user.id;
 
-        // Sprawdz czy ID to same cyfry
         if (!/^\d+$/.test(robloxId)) {
-            return interaction.editReply({
-                content: '❌ Podaj poprawne ID Roblox (tylko cyfry)!'
-            });
+            return interaction.editReply({ content: '❌ Podaj poprawne ID Roblox (tylko cyfry)!' });
         }
 
         try {
             const member = await interaction.guild.members.fetch(discordId);
-            const verified = loadVerified();
-
-            // Sprawdz czy jest adminem
             const isAdmin = member.permissions.has('Administrator');
 
-            // Sprawdz czy ma juz podlaczone konto
-            if (verified[discordId]) {
-                // Jesli admin - moze sie ponownie zweryfikowac
+            // Sprawdz czy juz zweryfikowany
+            const existing = await db.get(`verified.${discordId}`);
+            if (existing) {
                 if (isAdmin) {
-                    // Usun stare konto admina i pozwol na nowe
-                    delete verified[discordId];
-                    saveVerified(verified);
-                    console.log(`Admin ${member.user.tag} resetuje swoje konto.`);
+                    await db.delete(`verified.${discordId}`);
                 } else {
-                    // Zwykly gracz - nie moze sie ponownie weryfikowac
-                    const alreadyEmbed = new EmbedBuilder()
-                        .setColor("#FFA500")
-                        .setTitle('⚠️ Jestes juz zweryfikowany!')
-                        .setDescription(`Twoje konto jest juz podlaczone do ID Roblox: \`${verified[discordId].robloxId}\``)
-                        .addFields({
-                            name: '❓ Chcesz zmienic konto?',
-                            value: 'Skontaktuj sie z administratorem - uzyje on komendy `/odlacz`.'
-                        })
-                        .setFooter({ text: 'Lomza Roleplay' })
-                        .setTimestamp();
-                    return interaction.editReply({ embeds: [alreadyEmbed] });
+                    return interaction.editReply({
+                        content: `⚠️ Jestes juz zweryfikowany pod ID: \`${existing.robloxId}\`.\nSkontaktuj sie z administratorem jeśli chcesz zmienić konto.`
+                    });
                 }
             }
 
-            // Zapisz nowe konto
-            const verifiedData = loadVerified();
-            verifiedData[discordId] = {
+            // Zapisz weryfikację
+            await db.set(`verified.${discordId}`, {
                 robloxId: robloxId,
-                verifiedAt: new Date().toISOString(),
-                verifiedBy: 'self'
-            };
-            saveVerified(verifiedData);
-
-            // Nadaj role Obywatel
-            if (config.verifiedRoleId) {
-                await member.roles.add(config.verifiedRoleId).catch(e => {
-                    console.log("Blad nadawania roli Obywatel: " + e.message);
-                });
-            }
-
-            // Zabierz role Niezweryfikowany
-            if (config.unverifiedRoleId) {
-                await member.roles.remove(config.unverifiedRoleId).catch(e => {
-                    console.log("Blad usuwania roli Niezweryfikowany: " + e.message);
-                });
-            }
-
-            // Zmien nick na: NickDiscord (@IDRoblox)
-            const nowyNick = `${interaction.user.username} (@${robloxId})`;
-            await member.setNickname(nowyNick).catch(e => {
-                console.log("Blad zmiany nicku: " + e.message);
+                verifiedAt: Date.now()
             });
 
-            // Embed sukcesu
+            // Nadaj role
+            if (config.verifiedRoleId) await member.roles.add(config.verifiedRoleId).catch(() => {});
+            if (config.unverifiedRoleId) await member.roles.remove(config.unverifiedRoleId).catch(() => {});
+
+            // Zmien nick
+            const nowyNick = `${interaction.user.username} (@${robloxId})`;
+            await member.setNickname(nowyNick).catch(() => {});
+
             const successEmbed = new EmbedBuilder()
-                .setColor("#00FF7F")
-                .setTitle('✅ Weryfikacja zakonczona pomyslnie!')
-                .setDescription(`Witaj **${interaction.user.username}**!\nTwoje konto zostalo zweryfikowane.`)
+                .setColor(config.colors.success)
+                .setTitle('✅ Weryfikacja zakończona pomyślnie!')
+                .setDescription(`Twoje konto zostało zweryfikowane!\n**ID Roblox:** \`${robloxId}\``)
                 .addFields(
-                    { name: '🆔 ID Roblox', value: `\`${robloxId}\``, inline: true },
-                    { name: '🏷️ Nowy nick', value: `\`${nowyNick}\``, inline: true },
-                    { name: '🎖️ Ranga', value: 'Otrzymales range **Obywatel**', inline: false }
+                    { name: '🏷️ Nowy nick', value: `\`${nowyNick}\``, inline: false },
+                    { name: '🎖️ Ranga', value: 'Otrzymałeś rangę **Obywatel**', inline: false }
                 )
                 .setFooter({ text: 'Lomza Roleplay' })
                 .setTimestamp();
 
             await interaction.editReply({ embeds: [successEmbed] });
 
-            // LOG NA KANAL LOGOW
-            try {
-                if (!config.logChannelId) {
-                    console.log("⚠️ Brak LOG_CHANNEL_ID w zmiennych!");
-                    return;
+            // Log
+            if (config.logChannelId) {
+                const logChannel = interaction.guild.channels.cache.get(config.logChannelId);
+                if (logChannel) {
+                    const logEmbed = new EmbedBuilder()
+                        .setColor(config.colors.success)
+                        .setTitle('🔐 Nowa weryfikacja')
+                        .addFields(
+                            { name: '👤 Discord', value: `<@${discordId}> (${interaction.user.tag})`, inline: true },
+                            { name: '🆔 ID Roblox', value: `\`${robloxId}\``, inline: true },
+                            { name: '🏷️ Nick', value: `\`${nowyNick}\``, inline: false }
+                        )
+                        .setTimestamp();
+                    await logChannel.send({ embeds: [logEmbed] });
                 }
-
-                const logChannel = await interaction.guild.channels.fetch(config.logChannelId).catch(() => null);
-
-                if (!logChannel) {
-                    console.log("⚠️ Nie znaleziono kanalu logow! Sprawdz LOG_CHANNEL_ID w Railway.");
-                    return;
-                }
-
-                const logEmbed = new EmbedBuilder()
-                    .setColor("#00FF7F")
-                    .setTitle('🔐 Nowa weryfikacja | Log')
-                    .addFields(
-                        { name: '👤 Gracz Discord', value: `<@${discordId}> (${interaction.user.tag})`, inline: true },
-                        { name: '🆔 ID Roblox', value: `\`${robloxId}\``, inline: true },
-                        { name: '🏷️ Nowy nick', value: `\`${nowyNick}\``, inline: false },
-                        { name: '📅 Data', value: new Date().toLocaleString('pl-PL'), inline: false }
-                    )
-                    .setFooter({ text: 'Lomza Roleplay | System weryfikacji' })
-                    .setTimestamp();
-
-                await logChannel.send({ embeds: [logEmbed] });
-                console.log("✅ Log weryfikacji wyslany!");
-
-            } catch (logError) {
-                console.error("❌ Blad wysylania logu:", logError.message);
             }
 
         } catch (error) {
-            console.error('Blad weryfikacji:', error);
-            await interaction.editReply({
-                content: '❌ Wystapil blad podczas weryfikacji. Upewnij sie ze bot ma uprawnienia do zarzadzania rolami!'
-            });
+            console.error(error);
+            await interaction.editReply({ content: '❌ Wystąpił błąd podczas weryfikacji.' });
         }
     }
 };
