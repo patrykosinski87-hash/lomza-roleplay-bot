@@ -3,37 +3,49 @@ const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('weryfikacja')
-        .setDescription('Szybka weryfikacja dla Lomza Roleplay')
-        .addStringOption(o => o.setName('nick').setDescription('Twoj nick na Robloxie').setRequired(true)),
+        .setDescription('Weryfikacja po ID Roblox (bez cookie)')
+        .addStringOption(option =>
+            option.setName('id')
+                .setDescription('Twoje ID z Roblox (tylko liczby)')
+                .setRequired(true)
+        ),
 
     async execute(interaction, client, config) {
-        // Bot od razu zaczyna myśleć
         await interaction.deferReply({ ephemeral: true });
-        
-        const robloxName = interaction.options.getString('nick');
+
+        const robloxId = interaction.options.getString('id');
         const discordId = interaction.user.id;
+
+        // Sprawdzenie czy ID wygląda sensownie
+        if (!/^\d+$/.test(robloxId)) {
+            return interaction.editReply({ content: '❌ Podaj poprawne ID Roblox (tylko cyfry)!' });
+        }
 
         try {
             const member = await interaction.guild.members.fetch(discordId);
-            
-            // 1. NADAWANIE ROLI OBYWATEL
+
+            // Nadawanie roli Obywatel
             if (config.verifiedRoleId) {
-                await member.roles.add(config.verifiedRoleId).catch(e => console.log("Błąd roli: " + e.message));
+                await member.roles.add(config.verifiedRoleId).catch(() => {});
             }
 
-            // 2. ZABIERANIE ROLI NIEZWERYFIKOWANY
+            // Zabieranie roli Niezweryfikowany
             if (config.unverifiedRoleId) {
-                await member.roles.remove(config.unverifiedRoleId).catch(e => console.log("Błąd roli: " + e.message));
+                await member.roles.remove(config.unverifiedRoleId).catch(() => {});
             }
-            
-            // 3. ZMIANA NICKU NA: NickDiscord (@NickRoblox)
-            const nowyNick = `${interaction.user.username} (@${robloxName})`;
-            await member.setNickname(nowyNick).catch(e => console.log("Błąd nicku: " + e.message));
+
+            // Zmiana nicku na: Nick (@ID)
+            const nowyNick = `${interaction.user.username} (@${robloxId})`;
+            await member.setNickname(nowyNick).catch(() => {});
 
             const successEmbed = new EmbedBuilder()
                 .setColor("#00FF7F")
-                .setTitle('✅ Pomyslnie zweryfikowano!')
-                .setDescription(`Witaj **${interaction.user.username}**!\nTwoje konto zostalo polaczone z nickiem Roblox: **${robloxName}**.\n\nOtrzymales range Obywatel i Twoj nick zostal zaktualizowany.`)
+                .setTitle('✅ Weryfikacja zakończona pomyślnie!')
+                .setDescription(`Twoje konto zostało zweryfikowane!\n\n**ID Roblox:** \`${robloxId}\``)
+                .addFields(
+                    { name: '🏷️ Nowy nick na serwerze', value: `\`${nowyNick}\``, inline: false },
+                    { name: '🎖️ Ranga', value: 'Otrzymałeś rangę **Obywatel**', inline: false }
+                )
                 .setFooter({ text: 'Lomza Roleplay' })
                 .setTimestamp();
 
@@ -41,7 +53,7 @@ module.exports = {
 
         } catch (error) {
             console.error(error);
-            await interaction.editReply({ content: '❌ Wystąpił błąd podczas nadawania rangi. Upewnij się, że rola bota jest wyżej niż role graczy!' });
+            await interaction.editReply({ content: '❌ Wystąpił błąd. Sprawdź czy bot ma rolę wyżej niż Twoje role i czy ma uprawnienia do zarządzania rolami i nickami.' });
         }
     }
 };
