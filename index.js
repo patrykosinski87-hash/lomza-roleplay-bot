@@ -7,69 +7,55 @@ const config = {
     token: process.env.TOKEN,
     clientId: process.env.CLIENT_ID,
     guildId: process.env.GUILD_ID,
-    groupId: parseInt(process.env.GROUP_ID),
+    groupId: parseInt(process.env.GROUP_ID) || 0,
     roblosecurity: process.env.ROBLOSECURITY,
     logChannelId: process.env.LOG_CHANNEL_ID,
-    verificationChannelId: process.env.VERIFICATION_CHANNEL_ID,
     verifiedRoleId: process.env.VERIFIED_ROLE_ID,
     unverifiedRoleId: process.env.UNVERIFIED_ROLE_ID,
     adminRoleId: process.env.ADMIN_ROLE_ID,
-    colors: {
-        success: "#00FF7F",
-        error: "#FF4444",
-        info: "#5865F2",
-        warning: "#FFA500"
-    }
+    colors: { success: "#00FF7F", error: "#FF4444", info: "#5865F2", warning: "#FFA500" }
 };
 
 const client = new Client({
-    intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMembers,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
-    ]
+    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
 });
 
 client.commands = new Collection();
-
-const commandFiles = fs.readdirSync('./commands').filter(f => f.endsWith('.js'));
 const commands = [];
 
+// BEZPIECZNE ŁADOWANIE KOMEND
+const commandFiles = fs.readdirSync('./commands').filter(f => f.endsWith('.js'));
 for (const file of commandFiles) {
-    const command = require(`./commands/${file}`);
-    client.commands.set(command.data.name, command);
-    commands.push(command.data.toJSON());
+    try {
+        const command = require(`./commands/${file}`);
+        if ('data' in command && 'execute' in command) {
+            client.commands.set(command.data.name, command);
+            commands.push(command.data.toJSON());
+            console.log(`✅ Załadowano komendę: ${file}`);
+        }
+    } catch (error) {
+        console.error(`❌ BŁĄD w pliku ${file}:`, error.message);
+    }
 }
 
 const rest = new REST({ version: '10' }).setToken(config.token);
 
 (async () => {
     try {
-        console.log('⏳ Rejestruje komendy...');
-        await rest.put(
-            Routes.applicationGuildCommands(config.clientId, config.guildId),
-            { body: commands }
-        );
-        console.log('✅ Komendy zarejestrowane!');
+        console.log('⏳ Odświeżam komendy slash...');
+        await rest.put(Routes.applicationGuildCommands(config.clientId, config.guildId), { body: commands });
+        console.log('✅ Komendy zarejestrowane pomyślnie!');
     } catch (error) {
-        console.error('❌ Blad rejestracji komend:', error);
+        console.error('❌ Błąd rejestracji komend:', error.message);
     }
 })();
 
 client.once('ready', async () => {
-    console.log(`✅ Bot ${client.user.tag} jest online!`);
-    console.log(`🎮 Lomza Roleplay Bot dziala 24/7`);
-
+    console.log(`🚀 Bot ${client.user.tag} gotowy!`);
     try {
         await noblox.setCookie(config.roblosecurity);
-        const user = await noblox.getCurrentUser();
-        console.log(`✅ Zalogowano do Roblox jako: ${user.UserName}`);
-    } catch (error) {
-        console.error('❌ Blad logowania do Roblox:', error.message);
-    }
-
-    client.user.setActivity('Lomza Roleplay', { type: 3 });
+        console.log(`✅ Połączono z Roblox!`);
+    } catch (e) { console.log("⚠️ Błąd Roblox Cookie (Weryfikacja może nie działać)"); }
 });
 
 client.on('interactionCreate', async interaction => {
@@ -80,8 +66,12 @@ client.on('interactionCreate', async interaction => {
     try {
         await command.execute(interaction, client, config, noblox);
     } catch (error) {
-        console.error(error);
-        await interaction.reply({ content: '❌ Wystapil blad!', ephemeral: true }).catch(() => {});
+        console.error("Błąd podczas komendy:", error);
+        if (interaction.replied || interaction.deferred) {
+            await interaction.followUp({ content: '❌ Wystąpił błąd wewnętrzny bota.', ephemeral: true });
+        } else {
+            await interaction.reply({ content: '❌ Wystąpił błąd podczas uruchamiania komendy.', ephemeral: true });
+        }
     }
 });
 
