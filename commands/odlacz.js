@@ -17,17 +17,15 @@ module.exports = {
         try {
             const targetUser = interaction.options.getUser('gracz') || interaction.user;
             const targetId = targetUser.id;
-
-            // Test czy db działa
             const testValue = await db.get(`verified_${targetId}`);
             
             await interaction.editReply({ 
-                content: `🔍 Test bazy danych:\nID gracza: \`${targetId}\`\nDane w bazie: \`${JSON.stringify(testValue)}\`` 
+                content: `Test: ${JSON.stringify(testValue)}` 
             });
 
         } catch (error) {
             await interaction.editReply({ 
-                content: `❌ Dokladny blad: \`${error.message}\`` 
+                content: `Blad: ${error.message}` 
             });
         }
     }
