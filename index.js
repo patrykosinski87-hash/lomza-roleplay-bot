@@ -2,7 +2,9 @@ const { Client, GatewayIntentBits, Collection, REST, Routes } = require('discord
 const noblox = require('noblox.js');
 const fs = require('fs');
 require('dotenv').config();
-const db = require('./database');
+const { QuickDB } = require('quick.db');
+
+const db = new QuickDB();
 
 const config = {
     token: process.env.TOKEN,
@@ -30,16 +32,17 @@ const client = new Client({
 });
 
 client.commands = new Collection();
-
-const commandFiles = fs.readdirSync('./commands').filter(f => f.endsWith('.js'));
 const commands = [];
 
+const commandFiles = fs.readdirSync('./commands').filter(f => f.endsWith('.js'));
 for (const file of commandFiles) {
     try {
         const command = require(`./commands/${file}`);
-        client.commands.set(command.data.name, command);
-        commands.push(command.data.toJSON());
-        console.log(`✅ Załadowano: ${file}`);
+        if ('data' in command && 'execute' in command) {
+            client.commands.set(command.data.name, command);
+            commands.push(command.data.toJSON());
+            console.log(`✅ Załadowano komendę: ${file}`);
+        }
     } catch (error) {
         console.error(`❌ Błąd w pliku ${file}:`, error.message);
     }
@@ -54,22 +57,21 @@ const rest = new REST({ version: '10' }).setToken(config.token);
             Routes.applicationGuildCommands(config.clientId, config.guildId),
             { body: commands }
         );
-        console.log('✅ Komendy zarejestrowane!');
+        console.log('✅ Komendy zarejestrowane pomyślnie!');
     } catch (error) {
-        console.error('❌ Błąd rejestracji komend:', error.message);
+        console.error('❌ Błąd rejestracji:', error.message);
     }
 })();
 
-client.once('ready', async () => {
-    console.log(`✅ Bot ${client.user.tag} jest online!`);
-    console.log(`🎮 Lomza Roleplay Bot - gotowy do działania`);
+client.once('clientReady', async () => {
+    console.log(`✅ Bot ${client.user.tag} gotowy!`);
 
     if (config.roblosecurity) {
         try {
             await noblox.setCookie(config.roblosecurity);
             console.log('✅ Połączono z Roblox');
         } catch (e) {
-            console.log('⚠️ Nie udało się połączyć z Roblox (cookie może być złe)');
+            console.log('⚠️ Błąd Roblox Cookie');
         }
     }
 });
@@ -82,12 +84,15 @@ client.on('interactionCreate', async interaction => {
     try {
         await command.execute(interaction, client, config, noblox, db);
     } catch (error) {
-        console.error(error);
-        const reply = { content: '❌ Wystąpił błąd!', ephemeral: true };
-        if (interaction.replied || interaction.deferred) {
-            await interaction.followUp(reply);
-        } else {
-            await interaction.reply(reply);
+        console.error('Błąd podczas komendy:', error);
+        try {
+            if (interaction.replied || interaction.deferred) {
+                await interaction.followUp({ content: `❌ Blad: ${error.message}`, ephemeral: true });
+            } else {
+                await interaction.reply({ content: `❌ Blad: ${error.message}`, ephemeral: true });
+            }
+        } catch (e) {
+            console.error('Blad odpowiedzi:', e.message);
         }
     }
 });
