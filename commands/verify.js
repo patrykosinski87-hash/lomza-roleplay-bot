@@ -1,17 +1,17 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('weryfikacja')
         .setDescription('Zweryfikuj swoje konto Roblox')
-        .addStringOption(option =>
-            option.setName('id')
-                .setDescription('Twoje ID z Roblox (tylko cyfry)')
+        .addStringOption(o =>
+            o.setName('id')
+                .setDescription('Twoje ID Roblox (tylko cyfry)')
                 .setRequired(true)
         ),
 
-    async execute(interaction, client, config, noblox, db) {
-        await interaction.deferReply({ ephemeral: true });
+    async execute(interaction, config, db) {
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         const robloxId = interaction.options.getString('id');
         const discordId = interaction.user.id;
@@ -23,62 +23,53 @@ module.exports = {
         try {
             const member = await interaction.guild.members.fetch(discordId);
             const isAdmin = member.permissions.has('Administrator');
-            const existing = await db.get(`verified_${discordId}`);
+            const existing = await db.get(`v_${discordId}`);
 
-            if (existing) {
-                if (isAdmin) {
-                    await db.delete(`verified_${discordId}`);
-                } else {
-                    return interaction.editReply({
-                        content: `⚠️ Jestes juz zweryfikowany pod ID: \`${existing.robloxId}\`.\nSkontaktuj sie z administratorem jesli chcesz zmienic konto.`
-                    });
-                }
+            if (existing && !isAdmin) {
+                return interaction.editReply({
+                    content: `⚠️ Masz juz podlaczone konto ID: \`${existing.robloxId}\`\nSkontaktuj sie z adminem aby zmienic.`
+                });
             }
 
-            await db.set(`verified_${discordId}`, {
-                robloxId: robloxId,
-                verifiedAt: Date.now()
-            });
+            await db.set(`v_${discordId}`, { robloxId, date: Date.now() });
 
             if (config.verifiedRoleId) await member.roles.add(config.verifiedRoleId).catch(() => {});
             if (config.unverifiedRoleId) await member.roles.remove(config.unverifiedRoleId).catch(() => {});
+            await member.setNickname(`${interaction.user.username} (@${robloxId})`).catch(() => {});
 
-            const nowyNick = `${interaction.user.username} (@${robloxId})`;
-            await member.setNickname(nowyNick).catch(() => {});
-
-            const successEmbed = new EmbedBuilder()
+            const embed = new EmbedBuilder()
                 .setColor(config.colors.success)
-                .setTitle('✅ Weryfikacja zakonczona pomyslnie!')
-                .setDescription(`Twoje konto zostalo zweryfikowane!`)
+                .setTitle('✅ Zweryfikowano!')
                 .addFields(
                     { name: '🆔 ID Roblox', value: `\`${robloxId}\``, inline: true },
-                    { name: '🏷️ Nowy nick', value: `\`${nowyNick}\``, inline: true },
-                    { name: '🎖️ Ranga', value: 'Otrzymales range **Obywatel**', inline: false }
+                    { name: '🏷️ Nick', value: `\`${interaction.user.username} (@${robloxId})\``, inline: true },
+                    { name: '🎖️ Ranga', value: '**Obywatel**', inline: false }
                 )
                 .setFooter({ text: 'Lomza Roleplay' })
                 .setTimestamp();
 
-            await interaction.editReply({ embeds: [successEmbed] });
+            await interaction.editReply({ embeds: [embed] });
 
             if (config.logChannelId) {
-                const logChannel = interaction.guild.channels.cache.get(config.logChannelId);
-                if (logChannel) {
-                    const logEmbed = new EmbedBuilder()
-                        .setColor(config.colors.success)
-                        .setTitle('🔐 Nowa weryfikacja | Log')
-                        .addFields(
-                            { name: '👤 Discord', value: `<@${discordId}> (${interaction.user.tag})`, inline: true },
-                            { name: '🆔 ID Roblox', value: `\`${robloxId}\``, inline: true },
-                            { name: '🏷️ Nick', value: `\`${nowyNick}\``, inline: false }
-                        )
-                        .setTimestamp();
-                    await logChannel.send({ embeds: [logEmbed] });
+                const log = interaction.guild.channels.cache.get(config.logChannelId);
+                if (log) {
+                    await log.send({
+                        embeds: [new EmbedBuilder()
+                            .setColor(config.colors.success)
+                            .setTitle('🔐 Nowa weryfikacja')
+                            .addFields(
+                                { name: '👤 Discord', value: `<@${discordId}>`, inline: true },
+                                { name: '🆔 ID Roblox', value: `\`${robloxId}\``, inline: true }
+                            )
+                            .setTimestamp()
+                        ]
+                    });
                 }
             }
 
-        } catch (error) {
-            console.error('Blad weryfikacji:', error);
-            await interaction.editReply({ content: '❌ Wystapil blad podczas weryfikacji.' });
+        } catch (e) {
+            console.error('Blad weryfikacji:', e.message);
+            await interaction.editReply({ content: `❌ Blad: ${e.message}` });
         }
     }
 };
