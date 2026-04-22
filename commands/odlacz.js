@@ -6,7 +6,7 @@ module.exports = {
         .setDescription('Odlacz konto Roblox od Discorda')
         .addUserOption(option =>
             option.setName('gracz')
-                .setDescription('Gracz ktoremu odlaczasz konto')
+                .setDescription('Gracz ktoremu odlaczasz konto (zostaw puste aby odlaczyc swoje)')
                 .setRequired(false)
         )
         .addStringOption(option =>
@@ -20,28 +20,12 @@ module.exports = {
         await interaction.deferReply({ ephemeral: true });
 
         try {
-            // Sprawdz czy db istnieje
-            if (!db) {
-                console.error('❌ BLAD: db jest undefined!');
-                return interaction.editReply({ content: '❌ Blad bazy danych - db jest undefined!' });
-            }
-
             const targetUser = interaction.options.getUser('gracz') || interaction.user;
             const powod = interaction.options.getString('powod') || 'Brak powodu';
             const targetId = targetUser.id;
             const isSelf = targetId === interaction.user.id;
 
-            console.log(`🔍 Szukam konta dla: ${targetId}`);
-
-            // Pobierz dane
-            let existing;
-            try {
-                existing = await db.get(`verified_${targetId}`);
-                console.log(`📦 Dane z bazy:`, existing);
-            } catch (dbError) {
-                console.error('❌ Blad odczytu bazy:', dbError.message);
-                return interaction.editReply({ content: `❌ Blad odczytu bazy: ${dbError.message}` });
-            }
+            const existing = await db.get(`verified_${targetId}`);
 
             if (!existing) {
                 return interaction.editReply({
@@ -52,29 +36,14 @@ module.exports = {
             }
 
             const stareId = existing.robloxId;
-            console.log(`🗑️ Usuwam konto: ${stareId}`);
+            await db.delete(`verified_${targetId}`);
 
-            // Usun z bazy
-            try {
-                await db.delete(`verified_${targetId}`);
-                console.log(`✅ Usunieto konto z bazy`);
-            } catch (dbError) {
-                console.error('❌ Blad usuwania z bazy:', dbError.message);
-                return interaction.editReply({ content: `❌ Blad usuwania z bazy: ${dbError.message}` });
-            }
-
-            // Pobierz membera
             const member = await interaction.guild.members.fetch(targetId).catch(() => null);
-            console.log(`👤 Member znaleziony: ${member ? 'TAK' : 'NIE'}`);
 
             if (member) {
-                if (config.verifiedRoleId) {
-                    await member.roles.remove(config.verifiedRoleId).catch(e => console.log('Blad roli:', e.message));
-                }
-                if (config.unverifiedRoleId) {
-                    await member.roles.add(config.unverifiedRoleId).catch(e => console.log('Blad roli:', e.message));
-                }
-                await member.setNickname(null).catch(e => console.log('Blad nicku:', e.message));
+                if (config.verifiedRoleId) await member.roles.remove(config.verifiedRoleId).catch(() => {});
+                if (config.unverifiedRoleId) await member.roles.add(config.unverifiedRoleId).catch(() => {});
+                await member.setNickname(null).catch(() => {});
             }
 
             const successEmbed = new EmbedBuilder()
@@ -95,7 +64,6 @@ module.exports = {
 
             await interaction.editReply({ embeds: [successEmbed] });
 
-            // DM
             if (!isSelf) {
                 const dmEmbed = new EmbedBuilder()
                     .setColor(config.colors.error)
@@ -110,7 +78,6 @@ module.exports = {
                 await targetUser.send({ embeds: [dmEmbed] }).catch(() => {});
             }
 
-            // Log
             if (config.logChannelId) {
                 const logChannel = interaction.guild.channels.cache.get(config.logChannelId);
                 if (logChannel) {
@@ -118,7 +85,7 @@ module.exports = {
                         .setColor(config.colors.error)
                         .setTitle('🔓 Konto odlaczone | Log')
                         .addFields(
-                            { name: '👤 Gracz', value: `<@${targetId}>`, inline: true },
+                            { name: '👤 Gracz', value: `<@${targetId}> (${targetUser.tag})`, inline: true },
                             { name: '🆔 Bylo ID', value: `\`${stareId}\``, inline: true },
                             { name: '👮 Odlaczyl', value: isSelf ? 'Samoodlaczenie' : `<@${interaction.user.id}>`, inline: true },
                             { name: '📝 Powod', value: powod, inline: false }
@@ -129,11 +96,8 @@ module.exports = {
             }
 
         } catch (error) {
-            console.error('❌ GLOWNY BLAD odlaczania:', error.message);
-            console.error('Stack:', error.stack);
-            await interaction.editReply({
-                content: `❌ Blad: ${error.message}`
-            });
+            console.error('Blad odlaczania:', error.message);
+            await interaction.editReply({ content: `❌ Blad: ${error.message}` });
         }
     }
 };
