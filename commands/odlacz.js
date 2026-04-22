@@ -1,16 +1,4 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
-const fs = require('fs');
-const path = require('path');
-
-function loadVerified() {
-    const file = path.join(__dirname, '../data/verified.json');
-    if (!fs.existsSync(file)) fs.writeFileSync(file, '{}');
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
-}
-
-function saveVerified(data) {
-    fs.writeFileSync(path.join(__dirname, '../data/verified.json'), JSON.stringify(data, null, 2));
-}
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -18,7 +6,7 @@ module.exports = {
         .setDescription('Odlacz konto Roblox od Discorda')
         .addUserOption(option =>
             option.setName('gracz')
-                .setDescription('Gracz ktoremu odlaczasz konto (zostaw puste zeby odlaczyc swoje)')
+                .setDescription('Gracz ktoremu odlaczasz konto (zostaw puste, aby odlaczyc swoje)')
                 .setRequired(false)
         )
         .addStringOption(option =>
@@ -28,22 +16,21 @@ module.exports = {
         )
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
-    async execute(interaction, client, config) {
+    async execute(interaction, client, config, noblox, db) {
         await interaction.deferReply({ ephemeral: true });
 
-        // Jesli nie podano gracza, odlacz swoje konto
         const targetUser = interaction.options.getUser('gracz') || interaction.user;
         const powod = interaction.options.getString('powod') || 'Brak powodu';
         const targetId = targetUser.id;
         const isSelf = targetId === interaction.user.id;
 
         try {
-            const verified = loadVerified();
+            // Pobierz dane z bazy quick.db
+            const existing = await db.get(`verified.${targetId}`);
 
-            // Sprawdz czy gracz ma podlaczone konto
-            if (!verified[targetId]) {
+            if (!existing) {
                 const notVerifiedEmbed = new EmbedBuilder()
-                    .setColor("#FFA500")
+                    .setColor(config.colors.warning)
                     .setTitle('⚠️ Konto nie jest podlaczone!')
                     .setDescription(
                         isSelf
@@ -55,47 +42,39 @@ module.exports = {
                 return interaction.editReply({ embeds: [notVerifiedEmbed] });
             }
 
-            // Zapamietaj stare dane
-            const stareKonto = verified[targetId];
+            const stareId = existing.robloxId;
 
-            // Usun konto z bazy
-            delete verified[targetId];
-            saveVerified(verified);
+            // Usun z bazy danych
+            await db.delete(`verified.${targetId}`);
 
-            // Pobierz membera
+            // Pobierz membera z serwera
             const member = await interaction.guild.members.fetch(targetId).catch(() => null);
 
             if (member) {
                 // Zabierz role Obywatel
                 if (config.verifiedRoleId) {
-                    await member.roles.remove(config.verifiedRoleId).catch(e => {
-                        console.log("Blad usuwania roli Obywatel: " + e.message);
-                    });
+                    await member.roles.remove(config.verifiedRoleId).catch(() => {});
                 }
 
                 // Nadaj role Niezweryfikowany
                 if (config.unverifiedRoleId) {
-                    await member.roles.add(config.unverifiedRoleId).catch(e => {
-                        console.log("Blad nadawania roli Niezweryfikowany: " + e.message);
-                    });
+                    await member.roles.add(config.unverifiedRoleId).catch(() => {});
                 }
 
-                // Zresetuj nick
-                await member.setNickname(null).catch(e => {
-                    console.log("Blad resetowania nicku: " + e.message);
-                });
+                // Przywroc nick
+                await member.setNickname(null).catch(() => {});
             }
 
             // Embed sukcesu
             const successEmbed = new EmbedBuilder()
-                .setColor("#00FF7F")
+                .setColor(config.colors.success)
                 .setTitle('✅ Konto zostalo odlaczone!')
                 .addFields(
                     { name: '👤 Gracz', value: `<@${targetId}>`, inline: true },
-                    { name: '🆔 Bylo ID Roblox', value: `\`${stareKonto.robloxId}\``, inline: true },
+                    { name: '🆔 Bylo ID Roblox', value: `\`${stareId}\``, inline: true },
                     { name: '📝 Powod', value: powod, inline: false },
                     {
-                        name: '👮 Odlaczyl',
+                        name: '👮 Operacje wykonal',
                         value: isSelf ? 'Gracz sam odlaczyl swoje konto' : `<@${interaction.user.id}>`,
                         inline: false
                     }
@@ -105,71 +84,42 @@ module.exports = {
 
             await interaction.editReply({ embeds: [successEmbed] });
 
-            // DM do gracza (tylko jesli ktos inny odlaczyl)
+            // DM do gracza (jesli to nie on sam sie odlacza)
             if (!isSelf) {
                 try {
                     const dmEmbed = new EmbedBuilder()
-                        .setColor("#FF4444")
+                        .setColor(config.colors.error)
                         .setTitle('⚠️ Twoje konto zostalo odlaczone!')
-                        .setDescription('Administrator odlaczyl Twoje konto Roblox od serwera **Lomza Roleplay**.')
-                        .addFields(
-                            { name: '📝 Powod', value: powod },
-                            { name: '🔄 Co teraz?', value: 'Mozesz ponownie zweryfikowac konto uzywajac komendy `/weryfikacja`.' }
-                        )
+                        .setDescription(`Administrator odlaczyl Twoje konto Roblox od serwera **Lomza Roleplay**.`)
+                        .addFields({ name: '📝 Powod', value: powod })
                         .setFooter({ text: 'Lomza Roleplay' })
                         .setTimestamp();
 
                     await targetUser.send({ embeds: [dmEmbed] }).catch(() => {});
-                } catch {
-                    // Gracz moze miec wylaczone DM
-                }
+                } catch (e) { /* Gracz ma wylaczone DM */ }
             }
 
-            // LOG NA KANAL LOGOW
-            try {
-                if (!config.logChannelId) {
-                    console.log("⚠️ Brak LOG_CHANNEL_ID w zmiennych!");
-                    return;
+            // Log na kanal logow
+            if (config.logChannelId) {
+                const logChannel = interaction.guild.channels.cache.get(config.logChannelId);
+                if (logChannel) {
+                    const logEmbed = new EmbedBuilder()
+                        .setColor(config.colors.error)
+                        .setTitle('🔓 Konto odlaczone | Log')
+                        .addFields(
+                            { name: '👤 Gracz', value: `<@${targetId}> (${targetUser.tag})`, inline: true },
+                            { name: '🆔 Bylo ID', value: `\`${stareId}\``, inline: true },
+                            { name: '👮 Administrator', value: isSelf ? 'Samoodlaczenie' : `<@${interaction.user.id}>`, inline: true },
+                            { name: '📝 Powod', value: powod, inline: false }
+                        )
+                        .setTimestamp();
+                    await logChannel.send({ embeds: [logEmbed] });
                 }
-
-                const logChannel = await interaction.guild.channels.fetch(config.logChannelId).catch(() => null);
-
-                if (!logChannel) {
-                    console.log("⚠️ Nie znaleziono kanalu logow! Sprawdz LOG_CHANNEL_ID w Railway.");
-                    return;
-                }
-
-                const logEmbed = new EmbedBuilder()
-                    .setColor("#FF4444")
-                    .setTitle('🔓 Konto odlaczone | Log')
-                    .addFields(
-                        { name: '👤 Gracz', value: `<@${targetId}> (${targetUser.tag})`, inline: true },
-                        { name: '🆔 Bylo ID Roblox', value: `\`${stareKonto.robloxId}\``, inline: true },
-                        { name: '📝 Powod', value: powod, inline: false },
-                        {
-                            name: '👮 Odlaczyl',
-                            value: isSelf
-                                ? `Gracz sam odlaczyl swoje konto`
-                                : `<@${interaction.user.id}> (${interaction.user.tag})`,
-                            inline: false
-                        },
-                        { name: '📅 Data', value: new Date().toLocaleString('pl-PL'), inline: false }
-                    )
-                    .setFooter({ text: 'Lomza Roleplay | System weryfikacji' })
-                    .setTimestamp();
-
-                await logChannel.send({ embeds: [logEmbed] });
-                console.log("✅ Log odlaczenia wyslany!");
-
-            } catch (logError) {
-                console.error("❌ Blad wysylania logu:", logError.message);
             }
 
         } catch (error) {
             console.error('Blad odlaczania konta:', error);
-            await interaction.editReply({
-                content: '❌ Wystapil blad podczas odlaczania konta. Sprobuj ponownie.'
-            });
+            await interaction.editReply({ content: '❌ Wystapil blad podczas odlaczania konta.' });
         }
     }
 };
