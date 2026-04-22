@@ -1,24 +1,21 @@
-const { Client, GatewayIntentBits, Collection, REST, Routes } = require('discord.js');
-const noblox = require('noblox.js');
+const { Client, GatewayIntentBits, Collection, REST, Routes, MessageFlags } = require('discord.js');
 const fs = require('fs');
 require('dotenv').config();
 const { QuickDB } = require('quick.db');
-
 const db = new QuickDB();
 
 const config = {
     token: process.env.TOKEN,
     clientId: process.env.CLIENT_ID,
     guildId: process.env.GUILD_ID,
-    roblosecurity: process.env.ROBLOSECURITY,
     logChannelId: process.env.LOG_CHANNEL_ID,
     verifiedRoleId: process.env.VERIFIED_ROLE_ID,
     unverifiedRoleId: process.env.UNVERIFIED_ROLE_ID,
     colors: {
-        success: "#00FF7F",
-        error: "#FF4444",
-        info: "#5865F2",
-        warning: "#FFA500"
+        success: 0x00FF7F,
+        error: 0xFF4444,
+        info: 0x5865F2,
+        warning: 0xFFA500
     }
 };
 
@@ -38,13 +35,13 @@ const commandFiles = fs.readdirSync('./commands').filter(f => f.endsWith('.js'))
 for (const file of commandFiles) {
     try {
         const command = require(`./commands/${file}`);
-        if ('data' in command && 'execute' in command) {
+        if (command.data && command.execute) {
             client.commands.set(command.data.name, command);
             commands.push(command.data.toJSON());
-            console.log(`✅ Załadowano komendę: ${file}`);
+            console.log(`✅ Zaladowano: ${file}`);
         }
-    } catch (error) {
-        console.error(`❌ Błąd w pliku ${file}:`, error.message);
+    } catch (e) {
+        console.error(`❌ Blad w ${file}: ${e.message}`);
     }
 }
 
@@ -52,47 +49,30 @@ const rest = new REST({ version: '10' }).setToken(config.token);
 
 (async () => {
     try {
-        console.log('⏳ Rejestruje komendy...');
-        await rest.put(
-            Routes.applicationGuildCommands(config.clientId, config.guildId),
-            { body: commands }
-        );
-        console.log('✅ Komendy zarejestrowane pomyślnie!');
-    } catch (error) {
-        console.error('❌ Błąd rejestracji:', error.message);
+        await rest.put(Routes.applicationGuildCommands(config.clientId, config.guildId), { body: commands });
+        console.log('✅ Komendy zarejestrowane!');
+    } catch (e) {
+        console.error('❌ Blad rejestracji:', e.message);
     }
 })();
 
-client.once('clientReady', async () => {
-    console.log(`✅ Bot ${client.user.tag} gotowy!`);
-
-    if (config.roblosecurity) {
-        try {
-            await noblox.setCookie(config.roblosecurity);
-            console.log('✅ Połączono z Roblox');
-        } catch (e) {
-            console.log('⚠️ Błąd Roblox Cookie');
-        }
-    }
+client.once('clientReady', () => {
+    console.log(`✅ Bot ${client.user.tag} online!`);
 });
 
 client.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
     const command = client.commands.get(interaction.commandName);
     if (!command) return;
-
     try {
-        await command.execute(interaction, client, config, noblox, db);
-    } catch (error) {
-        console.error('Błąd podczas komendy:', error);
-        try {
-            if (interaction.replied || interaction.deferred) {
-                await interaction.followUp({ content: `❌ Blad: ${error.message}`, ephemeral: true });
-            } else {
-                await interaction.reply({ content: `❌ Blad: ${error.message}`, ephemeral: true });
-            }
-        } catch (e) {
-            console.error('Blad odpowiedzi:', e.message);
+        await command.execute(interaction, config, db);
+    } catch (e) {
+        console.error(`❌ Blad komendy: ${e.message}`);
+        const msg = { content: `❌ Blad: ${e.message}`, flags: MessageFlags.Ephemeral };
+        if (interaction.replied || interaction.deferred) {
+            await interaction.followUp(msg).catch(() => {});
+        } else {
+            await interaction.reply(msg).catch(() => {});
         }
     }
 });
